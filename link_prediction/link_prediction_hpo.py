@@ -1,3 +1,5 @@
+import os, subprocess
+
 from kge.graph import KGraph
 from kge.models import TransE, DistMult, Rescal, ComplEx
 from kge.loss_functions import LogisticLoss, PairwiseHingeLoss, Regularized, NLLMulticlass
@@ -16,27 +18,32 @@ import pandas as pd
 import uuid, copy, os, functools, operator
 
 
+if not os.path.isfile('link-prediction.zip'):
+    subprocess.run(['wget', 'https://www.dropbox.com/s/6066tiybyro1jmh/link-prediction.zip'])
+subprocess.run(['unzip', '-u', 'link-prediction.zip', '-d', 'data'])
+subprocess.run(['mkdir', '-p', 'checkpoints'])
+
 datasets = {
     'FB15K-237': [
-        '~/Data/FB15k-237/train.txt',
-        '~/Data/FB15k-237/valid.txt',
-        '~/Data/FB15k-237/test.txt'
+        'data/FB15k-237/train.txt',
+        'data/FB15k-237/valid.txt',
+        'data/FB15k-237/test.txt'
     ]
     # ,
     # 'WN18': [
-    #     '~/Data/WN18/train.txt',
-    #     '~/Data/WN18/valid.txt',
-    #     '~/Data/WN18/test.txt'
+    #     'WN18/train.txt',
+    #     'WN18/valid.txt',
+    #     'WN18/test.txt'
     # ],
     # 'WN18RR': [
-    #     '~/Data/WN18RR/train.txt',
-    #     '~/Data/WN18RR/valid.txt',
-    #     '~/Data/WN18RR/test.txt'
+    #     'WN18RR/train.txt',
+    #     'WN18RR/valid.txt',
+    #     'WN18RR/test.txt'
     # ],
     # 'FB15K': [
-    #     '~/Data/FB15k/train.txt',
-    #     '~/Data/FB15k/valid.txt',
-    #     '~/Data/FB15k/test.txt'
+    #     'FB15k/train.txt',
+    #     'FB15k/valid.txt',
+    #     'FB15k/test.txt'
     # ]
 }
 
@@ -44,7 +51,8 @@ estimator = EmbeddingEstimator(
     TransE(),
     optimizer_cls=Adam,
     batch_size=5000,
-    verbose=True
+    verbose=True,
+    checkpoint_dir='checkpoints'
 )
 
 common_values = {
