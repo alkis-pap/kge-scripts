@@ -90,7 +90,9 @@ class KGEWorker(Worker):
         batch_size = CSH.CategoricalHyperparameter('batch_size', choices=[1000, 5000])
         
         margin = CSH.CategoricalHyperparameter('margin', [0.5, 1])
-        reg_coeff = CSH.UniformFloatHyperparameter.
+        reg_coeff = CSH.UniformFloatHyperparameter('reg_coeff', lower=1e-5, upper=0.1, log=True)
+        p_reg = CSH.CategoricalHyperparameter('p_reg', choices=[1, 2, 3], default_value=2)
+        
         config_space.add_hyperparameters([embeding_dim, n_negatives, loss, regularization, learning_rate, batch_size, margin, reg_coeff, p_reg])
 
         if self.model_cls == TransE:
