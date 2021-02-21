@@ -90,9 +90,7 @@ class KGEWorker(Worker):
         batch_size = CSH.CategoricalHyperparameter('batch_size', choices=[1000, 5000])
         
         margin = CSH.CategoricalHyperparameter('margin', [0.5, 1])
-        reg_coeff = CSH.UniformFloatHyperparameter('reg_coeff', lower=1e-5, upper=0.1, log=True)
-        p_reg = CSH.CategoricalHyperparameter('p_reg', choices=[1, 2, 3], default_value=2)
-        
+        reg_coeff = CSH.UniformFloatHyperparameter.
         config_space.add_hyperparameters([embeding_dim, n_negatives, loss, regularization, learning_rate, batch_size, margin, reg_coeff, p_reg])
 
         if self.model_cls == TransE:
@@ -112,7 +110,7 @@ class KGEWorker(Worker):
         return config_space
 
 
-result_logger = hpres.json_result_logger(directory='.', overwrite=True)
+result_logger = hpres.json_result_logger(directory='results', overwrite=True)
 
 NS = hpns.NameServer(run_id='kge', host='127.0.0.1', port=None)
 NS.start()
@@ -121,6 +119,8 @@ NS.start()
 for dataset, files in datasets.items():
     print(dataset)
     g_train, g_valid, g_test = KGraph.from_csv(files, columns=[0,2,1])
+
+    g_train = g_train.with_inverse_triples()
 
     w = KGEWorker(TransE, g_train, g_valid)
     w.run(background=True)
@@ -131,7 +131,7 @@ for dataset, files in datasets.items():
         nameserver='127.0.0.1',
         result_logger=result_logger,
         eta=2,
-        min_budget=50,
+        min_budget=200,
         max_budget=800
     )
     res = bohb.run(n_iterations=3)
