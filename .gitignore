@@ -2,3 +2,6 @@
 */results/
 */data/
 *.zip
+*.json
+*.pyc
+*/__pycache__

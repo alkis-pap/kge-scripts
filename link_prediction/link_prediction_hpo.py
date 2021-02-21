@@ -14,8 +14,8 @@ from sklearn.experimental import enable_halving_search_cv
 from sklearn.model_selection import HalvingRandomSearchCV, PredefinedSplit
 
 import pandas as pd
+import numpy as np
 
-import uuid, copy, os, functools, operator
 
 
 if not os.path.isfile('link-prediction.zip'):
@@ -31,19 +31,19 @@ datasets = {
     ]
     # ,
     # 'WN18': [
-    #     'WN18/train.txt',
-    #     'WN18/valid.txt',
-    #     'WN18/test.txt'
+    #     'data/WN18/train.txt',
+    #     'data/WN18/valid.txt',
+    #     'data/WN18/test.txt'
     # ],
     # 'WN18RR': [
-    #     'WN18RR/train.txt',
-    #     'WN18RR/valid.txt',
-    #     'WN18RR/test.txt'
+    #     'data/WN18RR/train.txt',
+    #     'data/WN18RR/valid.txt',
+    #     'data/WN18RR/test.txt'
     # ],
     # 'FB15K': [
-    #     'FB15k/train.txt',
-    #     'FB15k/valid.txt',
-    #     'FB15k/test.txt'
+    #     'data/FB15k/train.txt',
+    #     'data/FB15k/valid.txt',
+    #     'data/FB15k/test.txt'
     # ]
 }
 
@@ -52,7 +52,10 @@ estimator = EmbeddingEstimator(
     optimizer_cls=Adam,
     batch_size=5000,
     verbose=True,
-    checkpoint_dir='checkpoints'
+    checkpoint_dir='checkpoints',
+    validation=True,
+    validation_period=25,
+    patience=4,
 )
 
 common_values = {
@@ -84,16 +87,25 @@ param_values = [
 ]
 
 def score(estimator, data):
-    return estimator.evaluate(data[0])['both']['hits@10']
+    train_graph, test_graph = data[0]
+    return estimator.evaluate(test_graph, train_graph)['both']['hits@10']
 
 
 for dataset, files in datasets.items():
     print(dataset)
 
     g_train, g_valid, g_test = KGraph.from_csv(files, columns=[0,2,1])
-    g_train.add_inverse_triples()
+    
+    np.random.seed(0)
+    g_valid_valid, g_valid_test = g_valid.random_split(0.1, 0.9)
+    
+    g_augmented = g_train.with_inverse_triples()
 
-    X = [g_train, g_valid]
+    X = [(g_augmented, g_valid_valid), (g_train, g_valid_test)]
+
+    g_train_final = g_train.combine(g_valid)
+    g_augmented_final = g_train_final.with_inverse_triples()
+
 
     search = HalvingRandomSearchCV(
         estimator, 
@@ -112,5 +124,9 @@ for dataset, files in datasets.items():
 
     search.fit(X)
 
-    print(search.best_score_)
-    print(search.best_params_)
+    print('Best validation score:', search.best_score_)
+    print('Best parameters:', search.best_params_)
+
+    search.best_estimator_.fit([g_augmented_final])
+    
+    print('Test score:', search.best_estimator_.evaluate(g_test, g_train_final))
