@@ -1,3 +1,4 @@
+import os, time
 from itertools import groupby
 from operator import itemgetter
 
@@ -5,7 +6,6 @@ import torch
 from torch.optim import Adam
 
 import numpy as np
-import time
 
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
@@ -105,10 +105,6 @@ class KGEWorker(Worker):
         if self.model_cls == TransE:
             p_transe = CSH.CategoricalHyperparameter('p_transe', choices=[1, 2], default_value=2)
             config_space.add_hyperparameter(p_transe)
-        #     config_space.add_forbidden_clause(CS.ForbiddenAndConjunction(
-        #         CS.ForbiddenEqualsClause(p_transe, 1),
-        #         CS.ForbiddenEqualsClause(loss, 'PairwiseHingeLoss')
-        #     ))
 
         config_space.add_conditions([
             CS.EqualsCondition(margin, loss, 'PairwiseHingeLoss'),
@@ -118,43 +114,61 @@ class KGEWorker(Worker):
 
         return config_space
 
-
-result_logger = hpres.json_result_logger(directory='results', overwrite=True)
+results_dir = f'results/{time.strftime('%Y%m%d_%H%M%S')}'
+os.makedirs(results_dir)
 
 NS = hpns.NameServer(run_id='kge', host='127.0.0.1', port=None)
 NS.start()
 
+results = []
 
 for dataset, files in datasets.items():
     print(dataset)
     g_train, g_valid, g_test = KGraph.from_csv(files, columns=[0,2,1])
 
-    w = KGEWorker(TransE, g_train, g_valid, g_test)
-    w.run(background=True)
+    for model_cls in [TransE, DistMult, ComplEx, Rescal]:
+        
+        result_logger = hpres.json_result_logger(directory=os.path.join(results_dir, dataset, model_cls.__name__), overwrite=True)
 
-    np.random.seed(0)
-    bohb = BOHB(
-        configspace=w.get_configspace(),
-        run_id='kge',
-        nameserver='127.0.0.1',
-        result_logger=result_logger,
-        eta=2,
-        min_budget=200,
-        max_budget=800
-    )
-    res = bohb.run(n_iterations=3)
+        w = KGEWorker(model_cls, g_train, g_valid, g_test)
+        w.run(background=True)
 
-    bohb.shutdown(shutdown_workers=True)
+        np.random.seed(0)
+        bohb = BOHB(
+            configspace=w.get_configspace(),
+            run_id='kge',
+            nameserver='127.0.0.1',
+            result_logger=result_logger,
+            eta=2,
+            min_budget=200,
+            max_budget=800
+        )
+        res = bohb.run(n_iterations=4)
 
-    id2config = res.get_id2config_mapping()
-    incumbent = res.get_incumbent_id()
+        bohb.shutdown(shutdown_workers=True)
 
-    print('Best found configuration:', id2config[incumbent]['config'])
-    print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
-    print('A total of %i runs where executed.' % len(res.get_all_runs()))
-    print('Total budget corresponds to %.1f full function evaluations.'%(sum([r.budget for r in res.get_all_runs()])/800))
-   
-    print(f"best config test score: {w.compute(id2config[incumbent]['config'], 1000)}")
+        id2config = res.get_id2config_mapping()
+        incumbent = res.get_incumbent_id()
+        best_config = id2config[incumbent]['config']
+
+        test_score = w.compute(best_config, 1000)
+
+        print('Best found configuration:', id2config[incumbent]['config'])
+        print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
+        print('A total of %i runs where executed.' % len(res.get_all_runs()))
+        print('Total budget corresponds to %.1f full function evaluations.'%(sum([r.budget for r in res.get_all_runs()])/800))
+    
+        print(f"best config test score: {test_score}")
+
+        results.append({
+            'dataset': dataset,
+            'model': model_cls.__name__,
+            **test_score['both'],
+            **best_config
+        })
+
+        w.shutdown()
+
 
 
 NS.shutdown()
