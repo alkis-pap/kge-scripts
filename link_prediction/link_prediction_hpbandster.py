@@ -4,7 +4,7 @@ from operator import itemgetter
 import torch
 from torch.optim import Adam
 
-import numpy
+import numpy as np
 import time
 
 import ConfigSpace as CS
@@ -27,14 +27,15 @@ from datasets import datasets
 
 class KGEWorker(Worker):
 
-    def __init__(self, model_cls, train_graph, validation_graph, nameserver='127.0.0.1'):
+    def __init__(self, model_cls, train_graph, validation_graph, test_graph, nameserver='127.0.0.1'):
         super().__init__(nameserver=nameserver, run_id='kge')
         self.model_cls = model_cls
         self.train_graph = train_graph
         self.validation_graph = validation_graph
+        self.test_graph = test_graph
 
 
-    def compute(self, config, budget, **kwargs):
+    def compute(self, config, budget, test=False, **kwargs):
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
         loss = eval(config['loss'])()
@@ -42,7 +43,10 @@ class KGEWorker(Worker):
         if 'margin' in config:
             loss.margin = config['margin']
 
-        
+        if test:
+            train_graph = self.train_graph.combine(self.validation_graph).with_inverse_triples()
+        else:
+            train_graph = self.train_graph.with_inverse_triples()
 
         model = self.model_cls(config['embedding_dim'])
             
@@ -53,14 +57,14 @@ class KGEWorker(Worker):
         if self.model_cls == TransE:
             model.p = config['p_transe']
 
-        model.init(self.train_graph, device)
-        loss.init(self.train_graph, device)
+        model.init(train_graph, device)
+        loss.init(train_graph, device)
 
         neg_sampler = UniformNegativeSamplerFast(config['n_negatives'])
-        neg_sampler.init(self.train_graph, device)
+        neg_sampler.init(train_graph, device)
 
         train(
-            graph=self.train_graph,
+            graph=train_graph,
             model=model,
             criterion=loss,
             negative_sampler=neg_sampler,
@@ -74,9 +78,12 @@ class KGEWorker(Worker):
             verbose=True
         )
 
-        scores = evaluate(model, self.validation_graph, device, verbose=True)
+        if test:
+            return evaluate(model, self.test_graph, device, verbose=True, train_graph=train_graph)
+        else:
+            scores = evaluate(model, self.validation_graph, device, verbose=True)
 
-        return { 'loss': -scores['both']['mrr'], 'info': scores }
+            return { 'loss': -scores['both']['mrr'], 'info': scores }
 
 
     def get_configspace(self):
@@ -122,11 +129,10 @@ for dataset, files in datasets.items():
     print(dataset)
     g_train, g_valid, g_test = KGraph.from_csv(files, columns=[0,2,1])
 
-    g_train = g_train.with_inverse_triples()
-
-    w = KGEWorker(TransE, g_train, g_valid)
+    w = KGEWorker(TransE, g_train, g_valid, g_test)
     w.run(background=True)
 
+    np.random.seed(0)
     bohb = BOHB(
         configspace=w.get_configspace(),
         run_id='kge',
@@ -146,6 +152,9 @@ for dataset, files in datasets.items():
     print('Best found configuration:', id2config[incumbent]['config'])
     print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
     print('A total of %i runs where executed.' % len(res.get_all_runs()))
-    print('Total budget corresponds to %.1f full function evaluations.'%(sum([r.budget for r in res.get_all_runs()])/args.max_budget))
+    print('Total budget corresponds to %.1f full function evaluations.'%(sum([r.budget for r in res.get_all_runs()])/800))
+   
+    print(f"best config test score: {w.compute(id2config[incumbent]['config'], 1000)}")
+
 
 NS.shutdown()
