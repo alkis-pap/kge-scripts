@@ -114,7 +114,7 @@ class KGEWorker(Worker):
 
         return config_space
 
-results_dir = f'results/{time.strftime('%Y%m%d_%H%M%S')}'
+results_dir = f"results/{time.strftime('%Y%m%d_%H%M%S')}"
 os.makedirs(results_dir)
 
 NS = hpns.NameServer(run_id='kge', host='127.0.0.1', port=None)
