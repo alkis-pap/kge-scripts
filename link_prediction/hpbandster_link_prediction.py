@@ -6,6 +6,7 @@ import torch
 from torch.optim import Adam
 
 import numpy as np
+import pandas as pd
 
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
@@ -23,6 +24,15 @@ from kge.training import train
 from kge.evaluation import evaluate
 
 from datasets import datasets
+
+
+# Hyper-hyper-parameters
+ETA = 2
+MIN_BUDGET = 100
+MAX_BUDGET = 800
+N_ITER = 4
+TEST_BUDGET = 800
+
 
 
 class KGEWorker(Worker):
@@ -73,7 +83,7 @@ class KGEWorker(Worker):
             device=device,
             batch_size=config['batch_size'],
             use_checkpoint=True,
-            checkpoint_dir='checkpoints',
+            checkpoint_dir='checkpoints2',
             checkpoint_period=10,
             verbose=True
         )
@@ -87,13 +97,13 @@ class KGEWorker(Worker):
 
 
     def get_configspace(self):
-        config_space = CS.ConfigurationSpace(seed=0)
+        config_space = CS.ConfigurationSpace(seed=1)
         
         embeding_dim = CSH.UniformIntegerHyperparameter('embedding_dim', lower=50, upper=300, default_value=100, q=10)
         n_negatives = CSH.UniformIntegerHyperparameter('n_negatives', lower=2, upper=100, default_value=10, q=2)
         loss = CSH.CategoricalHyperparameter('loss', choices=['PairwiseHingeLoss', 'LogisticLoss', 'NLLMulticlass'])
         regularization = CSH.CategoricalHyperparameter('regularization', choices=['normalization', 'Lp'])
-        learning_rate = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-5, upper=1e-2, default_value=1e-3, log=True)
+        learning_rate = CSH.UniformFloatHyperparameter('learning_rate', lower=1e-6, upper=1e-2, default_value=1e-3, log=True)
         batch_size = CSH.CategoricalHyperparameter('batch_size', choices=[1000, 5000])
         
         margin = CSH.CategoricalHyperparameter('margin', [0.5, 1])
@@ -114,13 +124,15 @@ class KGEWorker(Worker):
 
         return config_space
 
-results_dir = f"results/{time.strftime('%Y%m%d_%H%M%S')}"
-os.makedirs(results_dir)
+
 
 NS = hpns.NameServer(run_id='kge', host='127.0.0.1', port=None)
 NS.start()
 
+results_file = 'results/kge_hpbandster.csv'
 results = []
+if os.path.isfile(results_file):
+    results = pd.read_csv(results_file).to_dict('records')
 
 for dataset, files in datasets.items():
     print(dataset)
@@ -128,7 +140,22 @@ for dataset, files in datasets.items():
 
     for model_cls in [TransE, DistMult, ComplEx, Rescal]:
         
-        result_logger = hpres.json_result_logger(directory=os.path.join(results_dir, dataset, model_cls.__name__), overwrite=True)
+        entry = {
+            'dataset': dataset,
+            'model': model_cls.__name__,
+            'min_budget': MIN_BUDGET,
+            'max_budget': MAX_BUDGET,
+            'eta': ETA,
+            'test_budget': TEST_BUDGET
+        }
+
+        if results and any(all(r.get(key) == val for key, val in entry.items()) for r in results):
+            print('skipping')
+            continue
+
+        
+        hpb_results_dir = f"hpb_results_{time.strftime('%Y%m%d_%H%M%S')}"
+        result_logger = hpres.json_result_logger(directory=os.path.join('results', hpb_results_dir), overwrite=True)
 
         w = KGEWorker(model_cls, g_train, g_valid, g_test)
         w.run(background=True)
@@ -139,11 +166,11 @@ for dataset, files in datasets.items():
             run_id='kge',
             nameserver='127.0.0.1',
             result_logger=result_logger,
-            eta=2,
-            min_budget=200,
-            max_budget=800
+            eta=ETA,
+            min_budget=MIN_BUDGET,
+            max_budget=MAX_BUDGET
         )
-        res = bohb.run(n_iterations=4)
+        res = bohb.run(n_iterations=N_ITER)
 
         bohb.shutdown(shutdown_workers=True)
 
@@ -151,7 +178,7 @@ for dataset, files in datasets.items():
         incumbent = res.get_incumbent_id()
         best_config = id2config[incumbent]['config']
 
-        test_score = w.compute(best_config, 1000)
+        test_score = w.compute(best_config, TEST_BUDGET, test=True)
 
         print('Best found configuration:', id2config[incumbent]['config'])
         print('A total of %i unique configurations where sampled.' % len(id2config.keys()))
@@ -161,11 +188,15 @@ for dataset, files in datasets.items():
         print(f"best config test score: {test_score}")
 
         results.append({
-            'dataset': dataset,
-            'model': model_cls.__name__,
-            **test_score['both'],
-            **best_config
+            **entry, 
+            **test_score['both'], 
+            **best_config,
+            'hpb_results_dir': hpb_results_dir
         })
+
+        df = pd.DataFrame(results)
+        print(df.iloc[[-1]])
+        df.to_csv(results_file, index=False)
 
         w.shutdown()
 
